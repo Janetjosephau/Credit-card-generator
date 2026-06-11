@@ -75,6 +75,17 @@ const Sidebar: React.FC = () => {
                   <span className="font-bold">CE Credit Card Generator</span>
                 </Link>
               </li>
+              <li>
+                <Link
+                  to="/guestpay"
+                  className={`flex items-center space-x-3 transition-all duration-200 ${
+                    isActive('/guestpay') ? 'text-emerald-500' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <CreditCard size={22} className={isActive('/guestpay') ? 'fill-emerald-500/10' : ''} />
+                  <span className="font-bold">Guestpay Credit Card Generator</span>
+                </Link>
+              </li>
             </ul>
           </div>
         </nav>
