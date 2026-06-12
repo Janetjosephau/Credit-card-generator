@@ -93,6 +93,10 @@ const GuestpayCreditCardGenerator: React.FC = () => {
   const selectedConfig = ollamaConfigs.find(c => c.id === selectedConfigId)
 
   const handleGenerate = async () => {
+    if (!selectedConfig) {
+      toast.error('Please add an Ollama connection in LLM Configuration first.')
+      return
+    }
     if (numberOfCards < 1 || numberOfCards > 9) {
       toast.error('Number of cards must be between 1 and 9.')
       return
@@ -101,39 +105,6 @@ const GuestpayCreditCardGenerator: React.FC = () => {
     setGenerating(true)
     setGeneratedCards([])
 
-    const usedNumbers = new Set<string>()
-    const makeCard = (raw: any): GeneratedCard => {
-      let rawNumber: string
-      let attempts = 0
-      do { rawNumber = generateLuhnNumber(cardType); attempts++ }
-      while (usedNumbers.has(rawNumber) && attempts < 100)
-      usedNumbers.add(rawNumber)
-      return {
-        cardType,
-        cardNumber:     rawNumber,
-        cardHolder:     (raw.cardHolder || raw.card_holder || raw.name || 'TEST HOLDER').toString().toUpperCase(),
-        expiryDate:     futureDateMMYY(),
-        cvv:            randomCVV(cardType),
-        billingAddress: raw.billingAddress || raw.billing_address || raw.address || '',
-        zipCode:        String(raw.zipCode  || raw.zip_code || raw.zip || '00000'),
-      }
-    }
-
-    // ── No Ollama config? Use fallback pool directly ──
-    if (!selectedConfig) {
-      const pool = [...FALLBACK_PEOPLE].sort(() => Math.random() - 0.5)
-      const cards: GeneratedCard[] = Array.from({ length: numberOfCards }, (_, i) =>
-        makeCard(pool[i % pool.length])
-      )
-      setGeneratedCards(cards)
-      setGeneratedAt(new Date())
-      setShowResults(true)
-      setGenerating(false)
-      toast.success(`Generated ${cards.length} test card(s)!`)
-      return
-    }
-
-    // ── Ollama path ──
     const exampleItems = Array.from({ length: numberOfCards }, (_, i) =>
       `{"cardHolder":"PERSON ${i + 1} NAME","billingAddress":"${100 + i} Example St","zipCode":"${10000 + i}"}`
     ).join(',')
@@ -159,6 +130,24 @@ const GuestpayCreditCardGenerator: React.FC = () => {
       const cleaned   = text.replace(/```json|```/g, '').trim()
       const jsonMatch = cleaned.match(/\[[\s\S]*?\]/)
       if (!jsonMatch) throw new Error('Ollama returned an unexpected format. Try again or use a more capable model.')
+
+      const usedNumbers = new Set<string>()
+      const makeCard = (raw: any): GeneratedCard => {
+        let rawNumber: string
+        let attempts = 0
+        do { rawNumber = generateLuhnNumber(cardType); attempts++ }
+        while (usedNumbers.has(rawNumber) && attempts < 100)
+        usedNumbers.add(rawNumber)
+        return {
+          cardType,
+          cardNumber:     rawNumber,
+          cardHolder:     (raw.cardHolder || raw.card_holder || raw.name || 'TEST HOLDER').toString().toUpperCase(),
+          expiryDate:     futureDateMMYY(),
+          cvv:            randomCVV(cardType),
+          billingAddress: raw.billingAddress || raw.billing_address || raw.address || '',
+          zipCode:        String(raw.zipCode  || raw.zip_code || raw.zip || '00000'),
+        }
+      }
 
       let parsed: any[] = []
       try { parsed = JSON.parse(jsonMatch[0]) } catch {
@@ -287,7 +276,7 @@ const GuestpayCreditCardGenerator: React.FC = () => {
 
             {/* Generate Button — pushed to bottom */}
             <div className="flex-1" />
-            <button onClick={handleGenerate} disabled={generating}
+            <button onClick={handleGenerate} disabled={generating || !selectedConfigId}
               className="w-full h-10 bg-emerald-500 text-white rounded-xl font-black text-sm hover:bg-emerald-600 transition-all disabled:opacity-50 shadow-lg shadow-emerald-100 flex items-center justify-center gap-2">
               {generating
                 ? <><RefreshCw size={15} className="animate-spin" /><span>Generating...</span></>
