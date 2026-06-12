@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { CreditCard, RefreshCw, Copy, ChevronDown, XCircle, Download, EyeOff, X, Calendar, Clock } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { configStore, LLMConfig } from '../services/configStore'
-import { generateWithOllama } from '../services/llmService'
+import { generateWithLLM } from '../services/llmService'
 
 // ─── Luhn-Compliant Generator ─────────────────────────────────────────────────
 const CARD_BINS: Record<string, string[]> = {
@@ -120,8 +120,8 @@ const CECreditCardGenerator: React.FC = () => {
     ].join('\n')
 
     try {
-      const text = await generateWithOllama(
-        { apiUrl: selectedConfig.apiUrl, model: selectedConfig.model },
+      const text = await generateWithLLM(
+        selectedConfig,
         prompt
       )
 

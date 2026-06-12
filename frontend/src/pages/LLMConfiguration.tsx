@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { Save, Edit2, Trash2, CheckCircle, AlertCircle, Settings, RefreshCw, XCircle, ChevronDown } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { configStore, LLMConfig } from '../services/configStore'
-import { testOllamaConnection } from '../services/llmService'
+import { configStore, LLMConfig, LLMProvider } from '../services/configStore'
+import { testOllamaConnection, testGroqConnection } from '../services/llmService'
 
-const DEFAULT_URL = 'http://localhost:11434'
-const COMMON_MODELS = ['llama3', 'llama3.1', 'llama3.2', 'llama2', 'mistral', 'neural-chat', 'qwen2.5', 'phi3', 'gemma2']
+const DEFAULT_OLLAMA_URL = 'http://localhost:11434'
+const COMMON_OLLAMA_MODELS = ['llama3', 'llama3.1', 'llama3.2', 'llama2', 'mistral', 'neural-chat', 'qwen2.5', 'phi3', 'gemma2']
+const COMMON_GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'mixtral-8x7b-32768']
 
 const LLMConfiguration: React.FC = () => {
   const [configs, setConfigs]             = useState<LLMConfig[]>([])
@@ -16,7 +17,13 @@ const LLMConfiguration: React.FC = () => {
   const [testing, setTesting]             = useState(false)
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
 
-  const [formData, setFormData] = useState({ name: '', apiUrl: DEFAULT_URL, model: 'llama3' })
+  const [formData, setFormData] = useState({
+    name: '',
+    provider: 'groq' as LLMProvider,
+    apiUrl: DEFAULT_OLLAMA_URL,
+    apiKey: '',
+    model: 'llama-3.3-70b-versatile',
+  })
 
   const refresh = () => setConfigs(configStore.getAll())
 
@@ -27,14 +34,30 @@ const LLMConfiguration: React.FC = () => {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  // Fetches installed models — only auto-selects if current model isn't installed
+  const handleProviderChange = (provider: LLMProvider) => {
+    setFormData(prev => ({
+      ...prev,
+      provider,
+      model: provider === 'groq' ? 'llama-3.3-70b-versatile' : 'llama3',
+      apiUrl: provider === 'groq' ? 'https://api.groq.com' : DEFAULT_OLLAMA_URL,
+      apiKey: provider === 'groq' ? prev.apiKey : '',
+    }))
+    setFetchedModels([])
+  }
+
+  // Fetches installed models
   const handleFetchModels = async () => {
     setTesting(true)
     try {
-      const models = await testOllamaConnection(formData.apiUrl)
+      let models: string[]
+      if (formData.provider === 'groq') {
+        if (!formData.apiKey.trim()) { toast.error('Enter your Groq API key first.'); setTesting(false); return }
+        models = await testGroqConnection(formData.apiKey)
+      } else {
+        models = await testOllamaConnection(formData.apiUrl)
+      }
       setFetchedModels(models)
       if (models.length > 0) {
-        // Only auto-change the model if what the user has typed isn't in the list
         const currentIsAvailable = models.some(
           m => m.toLowerCase().includes(formData.model.toLowerCase()) ||
                formData.model.toLowerCase().includes(m.split(':')[0].toLowerCase())
@@ -43,48 +66,59 @@ const LLMConfiguration: React.FC = () => {
           setFormData(prev => ({ ...prev, model: models[0] }))
           toast.success(`Found ${models.length} model(s). Auto-selected: ${models[0]}`)
         } else {
-          toast.success(`Found ${models.length} model(s) on Ollama — your selection is available ✓`)
+          toast.success(`Found ${models.length} model(s) — your selection is available ✓`)
         }
       } else {
-        toast('Ollama connected but no models are installed yet.', { icon: '⚠️' })
+        toast('Connected but no models found.', { icon: '⚠️' })
       }
     } catch (e: any) {
+      const providerName = formData.provider === 'groq' ? 'Groq' : 'Ollama'
       setErrorModal({
         title: 'Connection Failed',
-        detail: `Could not reach Ollama at ${formData.apiUrl}.\n\n` +
-          `Make sure Ollama is running and CORS is enabled:\n` +
-          `  Windows: set OLLAMA_ORIGINS=* in your environment, then restart Ollama\n` +
-          `  macOS/Linux: OLLAMA_ORIGINS=* ollama serve\n\n` +
-          `Error: ${e.message}`,
+        detail: `Could not reach ${providerName}.\n\nError: ${e.message}`,
       })
     } finally { setTesting(false) }
   }
 
-  // Test only — NEVER changes the model selection
+  // Test only
   const handleTestOnly = async () => {
     setTesting(true)
     try {
-      const models = await testOllamaConnection(formData.apiUrl)
-      toast.success(`Ollama is reachable! ${models.length} model(s) installed.`)
+      if (formData.provider === 'groq') {
+        if (!formData.apiKey.trim()) { toast.error('Enter your Groq API key first.'); setTesting(false); return }
+        const models = await testGroqConnection(formData.apiKey)
+        toast.success(`Groq is reachable! ${models.length} model(s) available.`)
+      } else {
+        const models = await testOllamaConnection(formData.apiUrl)
+        toast.success(`Ollama is reachable! ${models.length} model(s) installed.`)
+      }
     } catch (e: any) {
       setErrorModal({
         title: 'Connection Failed',
-        detail: `Could not reach Ollama at ${formData.apiUrl}.\n\nError: ${e.message}`,
+        detail: `Error: ${e.message}`,
       })
     } finally { setTesting(false) }
   }
 
   const handleSave = async () => {
     if (!formData.name.trim()) { toast.error('Please enter a configuration name.'); return }
-    if (!formData.apiUrl.trim()) { toast.error('Please enter the Ollama URL.'); return }
+    if (formData.provider === 'groq' && !formData.apiKey.trim()) { toast.error('Please enter your Groq API key.'); return }
+    if (formData.provider === 'ollama' && !formData.apiUrl.trim()) { toast.error('Please enter the Ollama URL.'); return }
     if (!formData.model.trim()) { toast.error('Please select or type a model.'); return }
     setLoading(true)
     try {
+      const saveData = {
+        name: formData.name,
+        provider: formData.provider,
+        apiUrl: formData.apiUrl,
+        apiKey: formData.provider === 'groq' ? formData.apiKey : undefined,
+        model: formData.model,
+      }
       if (editingId) {
-        configStore.update(editingId, formData)
+        configStore.update(editingId, saveData)
         toast.success('Configuration updated!')
       } else {
-        configStore.save(formData)
+        configStore.save(saveData)
         toast.success('Configuration saved!')
       }
       refresh()
@@ -94,7 +128,14 @@ const LLMConfiguration: React.FC = () => {
 
   const handleEdit = (c: LLMConfig) => {
     setEditingId(c.id)
-    setFormData({ name: c.name, apiUrl: c.apiUrl, model: c.model })
+    setFormData({
+      name: c.name,
+      provider: c.provider || 'ollama',
+      apiUrl: c.apiUrl,
+      apiKey: c.apiKey || '',
+      model: c.model,
+    })
+    setFetchedModels([])
   }
 
   const confirmDelete = () => {
@@ -106,12 +147,14 @@ const LLMConfiguration: React.FC = () => {
   }
 
   const resetForm = () => {
-    setFormData({ name: '', apiUrl: DEFAULT_URL, model: 'llama3' })
+    setFormData({ name: '', provider: 'groq', apiUrl: DEFAULT_OLLAMA_URL, apiKey: '', model: 'llama-3.3-70b-versatile' })
     setEditingId(null)
     setFetchedModels([])
   }
 
-  const modelOptions = fetchedModels.length > 0 ? fetchedModels : COMMON_MODELS
+  const modelOptions = fetchedModels.length > 0
+    ? fetchedModels
+    : formData.provider === 'groq' ? COMMON_GROQ_MODELS : COMMON_OLLAMA_MODELS
 
   const getStatusBadge = (status: string) => {
     if (status === 'connected') return (
@@ -127,22 +170,18 @@ const LLMConfiguration: React.FC = () => {
     return <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-slate-100 text-slate-800">Untested</span>
   }
 
+  const getProviderBadge = (provider: LLMProvider) => {
+    if (provider === 'groq') return (
+      <span className="text-[9px] font-black bg-orange-500 text-white px-2 py-0.5 rounded-full uppercase tracking-tighter">Groq</span>
+    )
+    return (
+      <span className="text-[9px] font-black bg-blue-500 text-white px-2 py-0.5 rounded-full uppercase tracking-tighter">Ollama</span>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#f8fafc] p-8 md:p-12">
       <div className="max-w-6xl mx-auto space-y-12">
-
-        {/* ── CORS Info Banner ── */}
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-6 py-4 flex items-start gap-3">
-          <span className="text-amber-500 text-xl mt-0.5">⚡</span>
-          <div>
-            <p className="text-sm font-black text-amber-800">Ollama CORS Required</p>
-            <p className="text-xs text-amber-700 mt-1">
-              For browser-direct calls to work, start Ollama with:{' '}
-              <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono">OLLAMA_ORIGINS=* ollama serve</code>
-              {' '}(or set the env var in Windows before starting Ollama).
-            </p>
-          </div>
-        </div>
 
         {/* ── Form Card ── */}
         <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl overflow-hidden">
@@ -151,68 +190,150 @@ const LLMConfiguration: React.FC = () => {
               <Settings size={28} />
             </div>
             <div>
-              <h1 className="text-3xl font-black text-[#0f172a]">Ollama Configuration</h1>
+              <h1 className="text-3xl font-black text-[#0f172a]">LLM Configuration</h1>
               <p className="text-slate-500 mt-1 font-medium">
-                {editingId ? 'Edit your Ollama connection.' : 'Add your local Ollama instance to power the card generator.'}
+                {editingId ? 'Edit your LLM connection.' : 'Add an Ollama or Groq connection to power the card generators.'}
               </p>
             </div>
           </div>
 
           <div className="p-12 space-y-8">
+            {/* Provider Toggle */}
+            <div className="space-y-3">
+              <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Provider</label>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleProviderChange('groq')}
+                  className={`flex-1 h-14 rounded-2xl font-black text-sm transition-all border-2 ${
+                    formData.provider === 'groq'
+                      ? 'bg-orange-50 border-orange-400 text-orange-700'
+                      : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-slate-200'
+                  }`}>
+                  ☁️ Groq (Cloud)
+                </button>
+                <button
+                  onClick={() => handleProviderChange('ollama')}
+                  className={`flex-1 h-14 rounded-2xl font-black text-sm transition-all border-2 ${
+                    formData.provider === 'ollama'
+                      ? 'bg-blue-50 border-blue-400 text-blue-700'
+                      : 'bg-slate-50 border-slate-100 text-slate-400 hover:border-slate-200'
+                  }`}>
+                  💻 Ollama (Local)
+                </button>
+              </div>
+            </div>
+
             {/* Name */}
             <div className="space-y-3">
               <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Configuration Name *</label>
               <input type="text" name="name" value={formData.name} onChange={handleInput}
-                placeholder="e.g. Local Ollama"
+                placeholder={formData.provider === 'groq' ? 'e.g. My Groq Cloud' : 'e.g. Local Ollama'}
                 className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none" />
             </div>
 
-            {/* URL + Model row */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="space-y-3">
-                <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Ollama URL</label>
-                <input type="text" name="apiUrl" value={formData.apiUrl} onChange={handleInput}
-                  placeholder="http://localhost:11434"
-                  className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none" />
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Model</label>
-                  <button onClick={handleFetchModels} disabled={testing}
-                    className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 disabled:opacity-50">
-                    <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
-                    Fetch installed models
-                  </button>
+            {/* Provider-specific fields */}
+            {formData.provider === 'groq' ? (
+              /* ── Groq Fields ── */
+              <div className="space-y-8">
+                <div className="space-y-3">
+                  <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Groq API Key *</label>
+                  <input type="password" name="apiKey" value={formData.apiKey} onChange={handleInput}
+                    placeholder="gsk_..."
+                    className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none font-mono" />
+                  <p className="text-[10px] text-slate-400">
+                    Get your free API key at{' '}
+                    <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="text-emerald-500 font-bold hover:underline">
+                      console.groq.com/keys
+                    </a>
+                  </p>
                 </div>
 
-                {/* Dropdown — shown after fetch */}
-                {fetchedModels.length > 0 && (
-                  <div className="relative">
-                    <select name="model" value={formData.model} onChange={handleInput}
-                      className="w-full h-16 px-6 bg-slate-50 border-2 border-emerald-200 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 appearance-none outline-none">
-                      {fetchedModels.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Model</label>
+                    <button onClick={handleFetchModels} disabled={testing}
+                      className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 disabled:opacity-50">
+                      <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
+                      Fetch available models
+                    </button>
                   </div>
-                )}
 
-                {/* Always-visible text input so user can type any model name */}
-                <input
-                  type="text"
-                  name="model"
-                  value={formData.model}
-                  onChange={handleInput}
-                  placeholder="e.g. llama3, qwen2.5, mistral"
-                  className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none"
-                />
-                <p className="text-[10px] text-slate-400">
-                  {fetchedModels.length > 0
-                    ? `${fetchedModels.length} models fetched — select above or type below`
-                    : 'Type a model name, or click "Fetch installed models" to see what\'s on your Ollama'}
-                </p>
+                  {fetchedModels.length > 0 && (
+                    <div className="relative">
+                      <select name="model" value={formData.model} onChange={handleInput}
+                        className="w-full h-16 px-6 bg-slate-50 border-2 border-emerald-200 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 appearance-none outline-none">
+                        {fetchedModels.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    </div>
+                  )}
+
+                  <input type="text" name="model" value={formData.model} onChange={handleInput}
+                    placeholder="e.g. llama-3.3-70b-versatile"
+                    className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none" />
+                  <p className="text-[10px] text-slate-400">
+                    {fetchedModels.length > 0
+                      ? `${fetchedModels.length} models fetched — select above or type below`
+                      : 'Type a model name, or click "Fetch available models" to see what\'s on Groq'}
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : (
+              /* ── Ollama Fields ── */
+              <>
+                {/* CORS Info Banner */}
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl px-6 py-4 flex items-start gap-3">
+                  <span className="text-amber-500 text-xl mt-0.5">⚡</span>
+                  <div>
+                    <p className="text-sm font-black text-amber-800">Ollama CORS Required</p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      For browser-direct calls to work, start Ollama with:{' '}
+                      <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono">OLLAMA_ORIGINS=* ollama serve</code>
+                      {' '}(or set the env var in Windows before starting Ollama).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Ollama URL</label>
+                    <input type="text" name="apiUrl" value={formData.apiUrl} onChange={handleInput}
+                      placeholder="http://localhost:11434"
+                      className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none" />
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-black text-slate-400 tracking-widest uppercase">Model</label>
+                      <button onClick={handleFetchModels} disabled={testing}
+                        className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 disabled:opacity-50">
+                        <RefreshCw size={11} className={testing ? 'animate-spin' : ''} />
+                        Fetch installed models
+                      </button>
+                    </div>
+
+                    {fetchedModels.length > 0 && (
+                      <div className="relative">
+                        <select name="model" value={formData.model} onChange={handleInput}
+                          className="w-full h-16 px-6 bg-slate-50 border-2 border-emerald-200 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 appearance-none outline-none">
+                          {fetchedModels.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      </div>
+                    )}
+
+                    <input type="text" name="model" value={formData.model} onChange={handleInput}
+                      placeholder="e.g. llama3, qwen2.5, mistral"
+                      className="w-full h-16 px-6 bg-slate-50 border-2 border-slate-100 rounded-2xl text-slate-700 font-bold focus:border-emerald-500 focus:bg-white transition-all outline-none" />
+                    <p className="text-[10px] text-slate-400">
+                      {fetchedModels.length > 0
+                        ? `${fetchedModels.length} models fetched — select above or type below`
+                        : 'Type a model name, or click "Fetch installed models" to see what\'s on your Ollama'}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Buttons */}
             <div className="flex items-center space-x-4 pt-4">
@@ -242,7 +363,7 @@ const LLMConfiguration: React.FC = () => {
             <span className="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-sm shadow-sm">
               {configs.length}
             </span>
-            <span>Saved Ollama Connections</span>
+            <span>Saved Connections</span>
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -250,19 +371,24 @@ const LLMConfiguration: React.FC = () => {
               <div key={config.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-4">
-                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xs bg-emerald-50 text-emerald-600">
-                      OLL
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xs ${
+                      config.provider === 'groq'
+                        ? 'bg-orange-50 text-orange-600'
+                        : 'bg-emerald-50 text-emerald-600'
+                    }`}>
+                      {config.provider === 'groq' ? 'GRQ' : 'OLL'}
                     </div>
                     <div>
                       <div className="flex items-center space-x-2">
                         <h3 className="font-black text-slate-900">{config.name}</h3>
+                        {getProviderBadge(config.provider || 'ollama')}
                         {index === 0 && (
                           <span className="text-[9px] font-black bg-emerald-500 text-white px-2 py-0.5 rounded-full uppercase tracking-tighter animate-pulse">
                             Active
                           </span>
                         )}
                       </div>
-                      <p className="text-xs font-bold text-slate-400">{config.model} · {config.apiUrl}</p>
+                      <p className="text-xs font-bold text-slate-400">{config.model} · {config.provider === 'groq' ? 'Groq Cloud' : config.apiUrl}</p>
                     </div>
                   </div>
                   <div className="flex space-x-1">
@@ -289,7 +415,7 @@ const LLMConfiguration: React.FC = () => {
 
             {configs.length === 0 && (
               <div className="md:col-span-2 p-12 text-center bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2rem]">
-                <p className="text-slate-400 font-bold italic">No Ollama connections saved yet. Add one above!</p>
+                <p className="text-slate-400 font-bold italic">No connections saved yet. Add one above!</p>
               </div>
             )}
           </div>
@@ -306,7 +432,7 @@ const LLMConfiguration: React.FC = () => {
                 <Trash2 size={40} />
               </div>
               <h2 className="text-2xl font-black text-slate-900 mb-2">Delete Connection?</h2>
-              <p className="text-slate-500 font-medium mb-8">This will remove the saved Ollama config. This action cannot be undone.</p>
+              <p className="text-slate-500 font-medium mb-8">This will remove the saved config. This action cannot be undone.</p>
               <div className="flex space-x-4">
                 <button onClick={() => setDeleteConfirmId(null)} className="flex-1 h-14 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all">Cancel</button>
                 <button onClick={confirmDelete} className="flex-1 h-14 bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 transition-all">Yes, Delete</button>
@@ -329,7 +455,7 @@ const LLMConfiguration: React.FC = () => {
                 </div>
                 <div className="pt-1">
                   <h2 className="text-xl font-black text-slate-900">{errorModal.title}</h2>
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">Ollama Configuration · Error</p>
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1">LLM Configuration · Error</p>
                 </div>
               </div>
               <div className="bg-red-50 border border-red-100 rounded-2xl p-5 mb-8">
