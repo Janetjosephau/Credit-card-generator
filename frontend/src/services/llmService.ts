@@ -17,8 +17,7 @@ export async function testOllamaConnection(apiUrl: string): Promise<string[]> {
   const res = await fetch(`${apiUrl.replace(/\/$/, '')}/api/tags`, {
     method: 'GET',
     headers: { 
-      'Content-Type': 'application/json',
-      'ngrok-skip-browser-warning': 'true'
+      'Content-Type': 'application/json'
     },
   })
   if (!res.ok) throw new Error(`Ollama responded with HTTP ${res.status}`)
@@ -34,8 +33,7 @@ export async function generateWithOllama(config: OllamaConfig, prompt: string): 
   const res = await fetch(`${base}/api/generate`, {
     method: 'POST',
     headers: { 
-      'Content-Type': 'application/json',
-      'ngrok-skip-browser-warning': 'true'
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
       model: config.model,
